@@ -1,0 +1,79 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Nearby Stores — In-Store Savings</title>
+  <style>
+    body{font-family:system-ui, -apple-system,Segoe UI,Roboto,sans-serif;margin:18px}
+    .card{border:1px solid #e6e6ea;border-radius:10px;padding:12px;margin-bottom:12px}
+    .muted{color:#666}
+    .store{padding:12px;border:1px solid #f3f4f6;border-radius:8px;margin-bottom:8px}
+    a.btn{display:inline-block;padding:8px 12px;background:#111;color:#fff;border-radius:8px;text-decoration:none}
+  </style>
+</head>
+<body>
+  <h1>Stores Near You</h1>
+  <p class="muted">Allow location to find participating stores. Click a store to open the checkout experience.</p>
+  <div id="status" class="muted">Requesting location…</div>
+  <div id="stores"></div>
+
+  <div class="card">
+    <h3>Your savings</h3>
+    <div id="savingsInfo" class="muted">Loading total saved…</div>
+  </div>
+
+  <script>
+  // API base: use the public tunnel API during this demo session
+  const API_BASE = 'https://puny-chairs-yell.loca.lt';
+    function qp(name){ const p = new URLSearchParams(location.search); return p.get(name); }
+    async function api(path){ try{ const res = await fetch(API_BASE + path); if(!res.ok) return null; return await res.json(); }catch(e){ return null; } }
+
+    async function init(){
+      const lat = qp('lat'); const lng = qp('lng');
+      if(lat && lng){ return loadStores(lat, lng); }
+      if(!navigator.geolocation){ document.getElementById('status').textContent = 'Geolocation not supported; showing demo store'; return loadStores(37.7749, -122.4194); }
+      navigator.geolocation.getCurrentPosition(pos => loadStores(pos.coords.latitude, pos.coords.longitude), err => { document.getElementById('status').textContent = 'Location denied; showing demo store'; loadStores(37.7749, -122.4194); }, { timeout:5000 });
+    }
+
+    async function loadStores(lat, lng){
+      document.getElementById('status').textContent = `Finding stores near ${lat.toFixed(4)}, ${lng.toFixed(4)}...`;
+      const res = await api(`/v1/stores/nearby?lat=${lat}&lng=${lng}&radius=20000`);
+      const container = document.getElementById('stores'); container.innerHTML = '';
+      if(!res || !res.stores || res.stores.length===0){
+    container.innerHTML = '<div class="muted">No stores in range. <a href="/checkout.html?store_id=st_demo"><strong>Click here for demo checkout</strong></a></div>';
+        return;
+      }
+      if(!res || !res.stores || res.stores.length===0){
+        container.innerHTML = '<div class="muted">No stores found nearby</div>'; 
+        // still offer the demo checkout even when no stores are found
+        const cb = document.createElement('div'); cb.style.marginTop='8px'; cb.innerHTML = `<a class='btn' href='/checkout.html?store_id=st_demo'>Open Demo Checkout</a>`; container.appendChild(cb);
+        return; }
+      res.stores.forEach(s=>{
+        const el = document.createElement('div'); el.className='store';
+        el.innerHTML = `<strong>${s.name}</strong> <div class='muted'>${s.merchant?.name||''} — ${s.distanceMeters}m away</div><div style="margin-top:8px">Offers: ${s.offers.map(o=>o.terms||o.id).join(', ')}</div><div style="margin-top:8px"><a class='btn' href='/checkout.html?store_id=${encodeURIComponent(s.id)}'>Open Checkout</a></div>`;
+        container.appendChild(el);
+      });
+      document.getElementById('status').textContent = '';
+    }
+
+    init();
+
+    // load and display total saved for the customer (sum of rewardCents in wallet redemptions)
+    async function refreshSavings(){
+      try{
+        const res = await fetch(API_BASE + '/v1/wallet');
+        if(!res.ok) throw new Error('no api');
+        const j = await res.json();
+        const reds = j.redemptions || [];
+        const totalSaved = (reds.reduce((s,r)=> s + (r.rewardCents || r.posted_cents || 0), 0) / 100);
+        const totalSpent = (reds.reduce((s,r)=> s + (r.amountCents || 0), 0) / 100);
+        document.getElementById('savingsInfo').innerHTML = `Total saved: <strong>$${totalSaved.toFixed(2)}</strong> across ${reds.length} redemptions<br/>Total spend recorded: <strong>$${totalSpent.toFixed(2)}</strong>`;
+      }catch(e){ document.getElementById('savingsInfo').textContent = 'Savings unavailable (API down)'; }
+    }
+
+    // refresh savings on load
+    refreshSavings().catch(()=>{});
+  </script>
+</body>
+</html>
