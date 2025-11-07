@@ -1,0 +1,357 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>In-Store Checkout — Demo</title>
+  <style>
+    body{font-family:system-ui, -apple-system,Segoe UI,Roboto,sans-serif;margin:18px}
+    .grid{display:grid;grid-template-columns:1fr 420px;gap:18px}
+    .card{border:1px solid #e6e6ea;border-radius:10px;padding:12px}
+    button{padding:.4rem .7rem;border-radius:8px;border:1px solid #ddd;background:#111;color:#fff}
+    small.muted{color:#666}
+    table{width:100%;border-collapse:collapse}
+    td,th{padding:6px;border-bottom:1px solid #f0f0f0;text-align:left}
+    .muted{color:#777}
+    .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#f3f4f6;color:#111;font-weight:600}
+    .right{text-align:right}
+    .totals{font-weight:700}
+  </style>
+</head>
+<body>
+  <h1>Real-time Checkout — Auto Coupons (Demo)</h1>
+  <p class="muted">Add items to the basket, the engine will evaluate coupon combinations and pick the best savings in real time.</p>
+
+  <div class="grid">
+    <div>
+      <div class="card">
+          <h3>Catalog</h3>
+          <div class="muted">Click items to add them to the basket. If an API is running the demo will use real offers and update your wallet.</div>
+        <div id="catalog"></div>
+      </div>
+
+      <div class="card" style="margin-top:12px">
+        <h3>Available Coupons</h3>
+        <div id="coupons"></div>
+        <small class="muted">This demo supports percent, fixed, BOGO and bundle coupons.</small>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <h3>Basket <span class="muted">(<span id="count">0</span> items)</span></h3>
+        <div id="basketArea"></div>
+        <div style="margin-top:8px"><button onclick="runSampleScenario()">Run sample scenario</button></div>
+      </div>
+
+      <div class="card" style="margin-top:12px">
+        <h3>Savings Breakdown</h3>
+        <div id="breakdown"></div>
+      </div>
+      <div class="card" style="margin-top:12px">
+        <h3>Your total savings to date</h3>
+        <div id="walletSummary" class="muted">(loading...)</div>
+      </div>
+      <div class="card" style="margin-top:12px">
+        <h3>Loyalty Member</h3>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input id="loyaltyInput" placeholder="member id or name (e.g. lm_demo)" />
+          <button onclick="linkLoyalty()">Link</button>
+          <button onclick="clearLoyalty()" style="background:#666">Clear</button>
+        </div>
+        <div id="loyaltyInfo" style="margin-top:8px" class="muted">No loyalty member linked.</div>
+      </div>
+
+      <div class="card" style="margin-top:12px">
+        <h3>Redeem Points</h3>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input id="redeemPointsInput" placeholder="points to redeem (min 100)" />
+          <button onclick="redeemPoints()">Redeem</button>
+        </div>
+        <div id="redeemResult" style="margin-top:8px" class="muted"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  // ------- Mock catalog -------
+  const CATALOG = [
+    { sku: 'MILK', name: 'Whole Milk 1G', price: 5.49, category: 'Dairy' },
+    { sku: 'BREAD', name: 'Sourdough Loaf', price: 4.29, category: 'Bakery' },
+    { sku: 'SODA', name: 'Soda 12oz Can', price: 1.79, category: 'Beverage' },
+    { sku: 'CHIPS', name: 'Kettle Chips', price: 3.99, category: 'Snack' },
+    { sku: 'BAR', name: 'Protein Bar', price: 2.49, category: 'Snack' },
+    { sku: 'GRAPES', name: 'Red Grapes (lb)', price: 2.99, category: 'Produce' },
+    { sku: 'EGGS', name: 'Large Eggs (12)', price: 3.69, category: 'Dairy' }
+  ];
+
+  // ------- Demo coupons (local) -------
+  // percent: percent off eligible SKUs or entire basket if skus empty
+  // fixed: fixed cents off sku or entire basket (value in cents)
+  // bogo: buy one get one free on same sku
+  // bundle: set of skus -> fixed cents off
+  const COUPONS = [
+    { id:'c1', code:'SAVE10', title:'10% off Dairy', type:'percent', value:10, skus: ['MILK','EGGS'] },
+    { id:'c2', code:'5OFF', title:'$5 off Snacks', type:'fixed', value:500, skus: ['CHIPS','BAR'] },
+    { id:'c3', code:'BOGO-BAR', title:'BOGO Protein Bar', type:'bogo', sku:'BAR' },
+    { id:'c4', code:'BUNDLE-DRINK', title:'$2 off Soda + Chips', type:'bundle', skus:['SODA','CHIPS'], value:200 }
+  ];
+
+  // ------- Basket state -------
+  const basket = [] // array of { sku, qty }
+
+  // Read optional store_id from URL (so landing page can link into checkout for a store)
+  function queryParam(name){ const params = new URLSearchParams(window.location.search); return params.get(name); }
+  const SELECTED_STORE = queryParam('store_id') || 'st_demo';
+  // When developing locally the API runs on port 3001 — change if needed
+  const API_BASE = 'http://localhost:3001';
+  let LOYALTY_MEMBER = null; // { id, name, points }
+
+  async function apiCall(path, opts){
+    try{
+      const res = await fetch(API_BASE + path, opts);
+      if(!res.ok) throw new Error('bad response');
+      return { ok: true, data: await res.json() };
+    }catch(err){
+      return { ok: false, data: null };
+    }
+  }
+
+  function renderCatalog(){
+    const out = document.getElementById('catalog');
+    out.innerHTML = '';
+    CATALOG.forEach(p => {
+      const el = document.createElement('div');
+      el.style.display = 'flex'; el.style.justifyContent = 'space-between'; el.style.alignItems='center'; el.style.margin='6px 0'
+      el.innerHTML = `<div><strong>${p.name}</strong> <div class='muted'>${p.sku} • $${p.price.toFixed(2)}</div></div>`;
+      const btn = document.createElement('button'); btn.textContent='Add'; btn.onclick = ()=>addToBasket(p.sku);
+      el.appendChild(btn);
+      out.appendChild(el);
+    });
+  }
+
+  function renderCoupons(){
+    const out = document.getElementById('coupons'); out.innerHTML='';
+    COUPONS.forEach(c => {
+      const el = document.createElement('div'); el.style.margin = '8px 0';
+      el.innerHTML = `<div><span class='pill'>${c.code}</span> <strong>${c.title}</strong> <div class='muted'>${c.type}</div></div>`;
+      out.appendChild(el);
+    });
+  }
+
+  function addToBasket(sku){
+    const item = basket.find(b=>b.sku===sku);
+    if(item) item.qty++;
+    else basket.push({ sku, qty:1 });
+    update();
+  }
+
+  function removeFromBasket(sku){
+    const idx = basket.findIndex(b=>b.sku===sku);
+    if(idx===-1) return;
+    basket[idx].qty--;
+    if(basket[idx].qty<=0) basket.splice(idx,1);
+    update();
+  }
+
+  function buildDetailedCart(){
+    const lines = [];
+    basket.forEach(b=>{
+      const p = CATALOG.find(x=>x.sku===b.sku);
+      if(p) lines.push({ sku:b.sku, name:p.name, unit:p.price, qty:b.qty, subtotal: p.price*b.qty });
+    });
+    return lines;
+  }
+
+  // Simple engine: try all coupon subsets (small set), simulate applying them and pick the best total savings
+  function computeBestSavings(cartLines){
+    // convert to mutable items map
+    const cartItems = [];
+    cartLines.forEach(l=>{
+      for(let i=0;i<l.qty;i++) cartItems.push({ sku:l.sku, price:l.unit, name:l.name, used:false });
+    });
+
+    const couponSets = powerSet(COUPONS);
+    let best = { savings: 0, applied: [], breakdown: [], total: sum(cartLines.map(l=>l.subtotal)) };
+
+    couponSets.forEach(set => {
+      // deep copy items
+      const items = cartItems.map(it=>({ ...it }));
+      let savings = 0; const breakdown = [];
+      // apply coupons in set order
+      for(const c of set){
+        if(c.type==='percent'){
+          // percent off eligible items
+          const eligible = items.filter(it=> !it.used && ( !c.skus || c.skus.length===0 || c.skus.includes(it.sku) ));
+          const local = eligible.reduce((s,it)=> s + (it.price*(c.value/100)), 0);
+          if(local>0){ savings += local; breakdown.push({ code:c.code, amt:local }); }
+        } else if(c.type==='fixed'){
+          // fixed cents off eligible items or whole cart
+          if(c.skus && c.skus.length>0){
+            // apply once to the first eligible item
+            const it = items.find(it=> !it.used && c.skus.includes(it.sku));
+            if(it){ const val = c.value/100; savings += val; breakdown.push({ code:c.code, amt: val }); }
+          } else {
+            savings += c.value/100; breakdown.push({ code:c.code, amt: c.value/100 });
+          }
+        } else if(c.type==='bogo'){
+          // find pairs of same sku
+          const matches = items.filter(it=> !it.used && it.sku===c.sku);
+          if(matches.length>=2){
+            // give free for each pair
+            const pairs = Math.floor(matches.length/2);
+            let amt = 0;
+            for(let i=0;i<pairs;i++){
+              // free the cheapest in pair (they are equal price here)
+              const price = matches[i].price; amt += price; matches[i].used = true; // mark one as used
+            }
+            if(amt>0){ savings += amt; breakdown.push({ code:c.code, amt }); }
+          }
+        } else if(c.type==='bundle'){
+          // check if all skus present
+          const present = c.skus.every(sku=> items.some(it=> !it.used && it.sku===sku));
+          if(present){
+            savings += c.value/100; breakdown.push({ code:c.code, amt: c.value/100 });
+            // mark one of each sku used
+            c.skus.forEach(sku=>{ const it = items.find(itm=> !itm.used && itm.sku===sku); if(it) it.used = true; });
+          }
+        }
+      }
+
+      const subtotal = sum(cartLines.map(l=>l.subtotal));
+      if(savings > best.savings){ best = { savings, applied: set.map(s=>s.code), breakdown, total: subtotal - savings }; }
+    });
+
+    return best;
+  }
+
+  // ------- helpers -------
+  function powerSet(arr){
+    const res = [[]];
+    for(const item of arr){
+      const len = res.length;
+      for(let i=0;i<len;i++) res.push(res[i].concat(item));
+    }
+    return res;
+  }
+
+  function sum(xs){ return xs.reduce((s,x)=>s+x,0); }
+
+  function update(){
+    const lines = buildDetailedCart();
+    const area = document.getElementById('basketArea'); area.innerHTML='';
+    if(lines.length===0){ area.innerHTML = '<div class="muted">Basket is empty</div>'; document.getElementById('count').textContent='0'; renderBreakdown(null); return; }
+    document.getElementById('count').textContent = basket.reduce((s,b)=>s+b.qty,0);
+
+    const tbl = document.createElement('table');
+    const thead = document.createElement('thead'); thead.innerHTML = '<tr><th>Item</th><th class="right">Unit</th><th class="right">Qty</th><th class="right">Subtotal</th></tr>';
+    const tbody = document.createElement('tbody');
+    lines.forEach(l=>{
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${l.name} <div class='muted'>${l.sku}</div></td><td class='right'>$${l.unit.toFixed(2)}</td><td class='right'>${l.qty}</td><td class='right'>$${l.subtotal.toFixed(2)}</td>`;
+      tbody.appendChild(tr);
+    });
+    tbl.appendChild(thead); tbl.appendChild(tbody);
+    const subtotal = sum(lines.map(l=>l.subtotal));
+    const foot = document.createElement('div'); foot.style.marginTop='8px'; foot.innerHTML = `<div class='right totals'>Subtotal: $${subtotal.toFixed(2)}</div>`;
+    area.appendChild(tbl); area.appendChild(foot);
+
+    // engine: try server-side compute (not implemented) — else local
+    // For now compute locally
+    const best = computeBestSavings(lines);
+    renderBreakdown(best);
+  }
+
+  async function runSampleScenario(){
+    // 1) activate (use selected store if provided)
+    const storeId = SELECTED_STORE || (document.getElementById('store') && document.getElementById('store').value) || 'st_demo';
+    if(document.getElementById('store')) document.getElementById('store').value = storeId;
+    const a = await apiCall('/v1/presence/enter', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ store_id: storeId }) });
+    // 2) add a few items
+    addToBasket('MILK'); addToBasket('CHIPS'); addToBasket('BAR');
+    // 3) simulate purchase via API if available
+    const subtotal = CATALOG.find(x=>x.sku==='MILK').price + CATALOG.find(x=>x.sku==='CHIPS').price + CATALOG.find(x=>x.sku==='BAR').price;
+  const body = { amountCents: Math.round(subtotal*100), store_id: storeId };
+  if(LOYALTY_MEMBER && LOYALTY_MEMBER.id) body.loyalty_member_id = LOYALTY_MEMBER.id;
+  const res = await apiCall('/webhooks/sim/authorization', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
+    // 4) refresh wallet
+    const w = await apiCall('/v1/wallet');
+    if(w && w.ok) showWalletSummary(w.data);
+    update();
+    alert('Sample scenario complete — check Savings Breakdown and Wallet (if API available).');
+  }
+
+  // ----- Loyalty helpers -----
+  async function linkLoyalty(){
+    const v = document.getElementById('loyaltyInput').value.trim();
+    if(!v) return alert('enter id or name');
+    // if it looks like an id (starts with lm_) try to fetch, else create
+    if(v.startsWith('lm_')){
+      try{
+        const res = await fetch(API_BASE + '/v1/loyalty/' + encodeURIComponent(v));
+        if(!res.ok) throw new Error('not found');
+        LOYALTY_MEMBER = await res.json();
+        showLoyalty();
+        return;
+      }catch(e){ /* fallthrough to create */ }
+    }
+    // create a new member
+    try{
+      const res = await fetch(API_BASE + '/v1/loyalty/link', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ name: v }) });
+      if(!res.ok) throw new Error('create failed');
+      LOYALTY_MEMBER = await res.json();
+      showLoyalty();
+    }catch(e){ alert('Loyalty API unavailable'); }
+  }
+
+  async function clearLoyalty(){ LOYALTY_MEMBER = null; document.getElementById('loyaltyInfo').textContent = 'No loyalty member linked.'; }
+
+  function showLoyalty(){ if(!LOYALTY_MEMBER) return clearLoyalty(); document.getElementById('loyaltyInfo').innerHTML = `<div><strong>${LOYALTY_MEMBER.name}</strong> <span class="muted">(${LOYALTY_MEMBER.id})</span></div><div>Points: <strong>${LOYALTY_MEMBER.points||0}</strong></div>`; }
+
+  async function redeemPoints(){
+    const v = document.getElementById('redeemPointsInput').value.trim();
+    const pts = Number(v || 0);
+    if(!LOYALTY_MEMBER) return alert('no loyalty member linked');
+    if(!pts || pts < 100) return alert('enter at least 100 points (demo rule)');
+    try{
+      const res = await fetch(API_BASE + '/v1/loyalty/redeem', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ loyalty_member_id: LOYALTY_MEMBER.id, points: pts }) });
+      const j = await res.json();
+      if(!j.ok) return alert('redeem failed: ' + (j.error||JSON.stringify(j)));
+    LOYALTY_MEMBER = j.member;
+    showLoyalty();
+    document.getElementById('redeemResult').textContent = `Redeemed ${pts} points -> $${((Math.floor(pts/100))/100).toFixed(2)} credited to wallet (posted).`;
+    // refresh wallet summary after redeem
+    const w = await apiCall('/v1/wallet'); if(w && w.ok) showWalletSummary(w.data);
+    }catch(e){ alert('redeem failed'); }
+  }
+
+  function renderBreakdown(best){
+    const out = document.getElementById('breakdown'); out.innerHTML='';
+    if(!best || best.savings===0){ out.innerHTML = '<div class="muted">No coupons applied. Add items to see savings.</div>'; return; }
+    const ul = document.createElement('div');
+    best.breakdown.forEach(b=>{
+      const r = document.createElement('div'); r.innerHTML = `<strong>${b.code}</strong> — saved $${(b.amt).toFixed(2)}`; ul.appendChild(r);
+    });
+    const totals = document.createElement('div'); totals.style.marginTop='8px'; totals.innerHTML = `<div class='totals'>Total savings: $${best.savings.toFixed(2)}</div><div class='muted'>Final total: $${best.total.toFixed(2)}</div>`;
+    out.appendChild(ul); out.appendChild(totals);
+  }
+
+  // init
+  renderCatalog(); renderCoupons(); update();
+  // load wallet summary if API available
+  (async function(){ const w = await apiCall('/v1/wallet'); if(w && w.ok) showWalletSummary(w.data); else document.getElementById('walletSummary').textContent = '(no API)'; })();
+
+  function showWalletSummary(wallet){
+    try{
+      // wallet shape: { postedCents, provisionalCents, redemptions: [...] }
+      const posted = (wallet.postedCents || 0) / 100;
+      const provisional = (wallet.provisionalCents || 0) / 100;
+      // sum of posted redemption amounts if available
+      const totalFromRedemptions = (wallet.redemptions && Array.isArray(wallet.redemptions)) ? wallet.redemptions.filter(r=>r.status==='posted').reduce((s,r)=>s + (r.rewardCents||0), 0)/100 : null;
+      const display = totalFromRedemptions !== null ? `$${totalFromRedemptions.toFixed(2)} (posted rewards)` : `$${posted.toFixed(2)} posted, $${provisional.toFixed(2)} provisional`;
+      document.getElementById('walletSummary').textContent = display;
+    }catch(e){ document.getElementById('walletSummary').textContent = '(error reading wallet)'; }
+  }
+  </script>
+</body>
+</html>

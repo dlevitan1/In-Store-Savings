@@ -1,0 +1,195 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Retailer Dashboard — In-Store Savings</title>
+  <style>
+    body{font-family:system-ui, -apple-system,Segoe UI,Roboto,sans-serif;margin:18px}
+    .card{border:1px solid #e6e6ea;border-radius:10px;padding:12px;margin-bottom:12px}
+    button{padding:.4rem .7rem;border-radius:8px;border:1px solid #ddd;background:#111;color:#fff}
+    .muted{color:#666}
+    table{width:100%;border-collapse:collapse}
+    td,th{padding:6px;border-bottom:1px solid #f0f0f0;text-align:left}
+  </style>
+</head>
+<body>
+  <h1>Retailer Dashboard</h1>
+  <p class="muted">View simple metrics for a store: traffic, redemptions and rewards. Use this to show operators how many customers were driven into the store.</p>
+
+  <div class="card">
+    <h3>Choose store</h3>
+    <div style="display:flex;gap:8px;align-items:center">
+      <input id="storeId" placeholder="store id (e.g. st_demo)" value="st_demo" />
+      <button onclick="loadMetrics()">Load Metrics</button>
+      <button onclick="loadRecent()">Load Recent Txns</button>
+    </div>
+    <div id="metrics" style="margin-top:12px"></div>
+    <div style="margin-top:12px">
+      <canvas id="txChart" height="120"></canvas>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Recent Transactions</h3>
+    <div id="txlist">(click 'Load Recent Txns')</div>
+  </div>
+
+  <div class="card">
+    <h3>Promo Campaigns (demo)</h3>
+    <div id="campaigns">
+      <div style="margin-bottom:8px">Use these demo campaigns to simulate marketing-driven sales.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <div class="campaign" data-name="Weekend Boost" data-count="10" data-avg="2500" data-reward="300" style="flex:1;min-width:220px;border:1px solid #f3f4f6;padding:10px;border-radius:8px">
+          <strong>Weekend Boost</strong>
+         <div class="muted">Total projected sales from campaign: <strong class="proj">$0.00</strong></div>
+          <div style="margin-top:8px"><button class="run">Run Campaign</button></div>
+        </div>
+        <div class="campaign" data-name="Breakfast Promo" data-count="6" data-avg="1500" data-reward="150" style="flex:1;min-width:220px;border:1px solid #f3f4f6;padding:10px;border-radius:8px">
+          <strong>Breakfast Promo</strong>
+         <div class="muted">Total projected sales from campaign: <strong class="proj">$0.00</strong></div>
+          <div style="margin-top:8px"><button class="run">Run Campaign</button></div>
+        </div>
+        <div class="campaign" data-name="Holiday Special" data-count="20" data-avg="3000" data-reward="500" style="flex:1;min-width:220px;border:1px solid #f3f4f6;padding:10px;border-radius:8px">
+          <strong>Holiday Special</strong>
+            <div class="muted">Total projected sales from campaign: <strong class="proj">$0.00</strong></div>
+          <div style="margin-top:8px"><button class="run">Run Campaign</button></div>
+        </div>
+      </div>
+    </div>
+    <div id="campaignResult" style="margin-top:12px" class="muted"></div>
+  </div>
+
+  <div class="card">
+    <h3>Nearby Stores (from your browser location)</h3>
+    <div><button onclick="findNearby()">Find Nearby Stores</button> <span class="muted">(Allows geolocation)</span></div>
+    <div id="nearby" style="margin-top:8px"></div>
+  </div>
+
+  <script>
+    // load Chart.js from CDN
+    (function(){
+      const s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/chart.js'; s.onload = ()=>{}; document.head.appendChild(s);
+    })();
+    const API_BASE = 'http://localhost:3001';
+
+    async function api(path, opts){
+      try{ const res = await fetch(API_BASE + path, opts); return await res.json(); }catch(e){ return null; }
+    }
+
+    async function loadMetrics(){
+      const storeId = document.getElementById('storeId').value.trim();
+      const data = await api('/v1/admin/metrics?store_id=' + encodeURIComponent(storeId));
+      if(!data){ document.getElementById('metrics').innerText = 'API unavailable'; return; }
+      document.getElementById('metrics').innerHTML = `
+        <div style="display:flex;gap:12px;flex-wrap:wrap">
+          <div><strong>${data.totalTransactions}</strong><div class="muted">Transactions</div></div>
+          <div><strong>${data.totalRedemptions}</strong><div class="muted">Redemptions</div></div>
+          <div><strong>${data.postedRedemptions}</strong><div class="muted">Posted</div></div>
+          <div><strong>${(data.totalRewardPosted/100).toFixed(2)}</strong><div class="muted">Total Reward (posted)</div></div>
+          <div><strong>${(data.avgAuthAmount/100).toFixed(2)}</strong><div class="muted">Avg Basket</div></div>
+        </div>
+      `;
+      // render time-series chart after metrics
+      renderChart(storeId).catch(()=>{});
+    }
+
+    async function loadRecent(){
+      const data = await api('/v1/admin/transactions');
+      const r = await api('/v1/admin/redemptions');
+      if(!data){ document.getElementById('txlist').innerText = 'API unavailable'; return; }
+      const rows = data.transactions.map(t => `<tr><td>${t.id}</td><td>${t.store_id}</td><td>${(t.auth_amount_cents/100).toFixed(2)}</td><td>${t.status}</td></tr>`).join('');
+      document.getElementById('txlist').innerHTML = `<table><thead><tr><th>ID</th><th>Store</th><th>Amount</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
+    }
+
+    async function findNearby(){
+      if(!navigator.geolocation){ document.getElementById('nearby').innerText='Geolocation not supported'; return; }
+      navigator.geolocation.getCurrentPosition(async pos => {
+        const lat = pos.coords.latitude; const lng = pos.coords.longitude;
+        const res = await api(`/v1/stores/nearby?lat=${lat}&lng=${lng}&radius=20000`);
+        if(!res){ document.getElementById('nearby').innerText='API unavailable'; return; }
+        if(!res.stores || res.stores.length===0){ document.getElementById('nearby').innerText='No stores nearby'; return; }
+        const html = res.stores.map(s => `<div><strong>${s.name}</strong> <div class="muted">${s.merchant?.name||''} — ${s.distanceMeters}m away</div><div>Offers: ${s.offers.map(o=>o.terms||o.id).join(', ')}</div></div><hr/>`).join('');
+        document.getElementById('nearby').innerHTML = html;
+      }, err => { document.getElementById('nearby').innerText = 'Location permission denied or unavailable'; }, { enableHighAccuracy: false, timeout: 5000 });
+    }
+
+    async function runCampaign(name,count,avg,reward){
+      const storeId = document.getElementById('storeId').value.trim();
+      document.getElementById('campaignResult').textContent = 'Running campaign...';
+      try{
+    const res = await fetch(API_BASE + '/v1/admin/simulate_campaign', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ store_id: storeId, count, avg_amount_cents: avg, reward_cents: reward, campaign_name: name }) });
+        const j = await res.json();
+        document.getElementById('campaignResult').textContent = 'Campaign completed: ' + (j.created || j.createdCount || 0) + ' txns';
+        await loadMetrics(); await loadRecent();
+      }catch(e){ document.getElementById('campaignResult').textContent = 'Campaign error'; }
+    }
+
+    // Render a simple time-series chart of transactions and posted redemptions over the last 24 hours
+    async function renderChart(storeId){
+      if(typeof Chart === 'undefined') return; // library not loaded yet
+      const txRes = await api('/v1/admin/transactions');
+      const rRes = await api('/v1/admin/redemptions');
+      const txs = (txRes && txRes.transactions) ? txRes.transactions.filter(t=> !storeId || t.store_id === storeId) : [];
+      const rds = (rRes && rRes.redemptions) ? rRes.redemptions.filter(r=> r.status === 'posted' && (!storeId || r.store_id === storeId)) : [];
+
+      // build 24 hourly buckets (labels = hours ago)
+      const now = Date.now();
+      const hours = 24;
+      const labels = [];
+      const txCounts = new Array(hours).fill(0);
+      const rdCounts = new Array(hours).fill(0);
+      for(let i=hours-1;i>=0;i--){ const t = new Date(now - i*60*60*1000); labels.push(t.getHours() + ':00'); }
+
+      txs.forEach(t => {
+        const ts = new Date(t.auth_ts || t.ts || t.created_at).getTime();
+        const diffH = Math.floor((now - ts) / (1000*60*60));
+        if(diffH >=0 && diffH < hours) txCounts[hours-1-diffH]++;
+      });
+      rds.forEach(r => {
+        const ts = new Date(r.posted_ts || r.ts).getTime();
+        const diffH = Math.floor((now - ts) / (1000*60*60));
+        if(diffH >=0 && diffH < hours) rdCounts[hours-1-diffH]++;
+      });
+
+      const ctx = document.getElementById('txChart').getContext('2d');
+      // destroy existing if present
+      if(window._txChart) try{ window._txChart.destroy(); }catch(e){}
+      window._txChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            { label: 'Transactions', data: txCounts, borderColor: '#0b69ff', backgroundColor: 'rgba(11,105,255,0.08)', tension: 0.25 },
+            { label: 'Posted Redemptions', data: rdCounts, borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.08)', tension: 0.25 }
+          ]
+        },
+        options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, ticks: { precision:0 } } } }
+      });
+    }
+
+    // wire up campaign cards: compute projections and attach run handlers
+    function setupCampaigns(){
+      const cards = document.querySelectorAll('.campaign');
+      cards.forEach(card => {
+        const count = parseInt(card.getAttribute('data-count') || '0', 10);
+        const reward = parseInt(card.getAttribute('data-reward') || '0', 10);
+        const proj = (count * reward) / 100;
+        const el = card.querySelector('.proj');
+        if(el) el.innerText = '$' + proj.toFixed(2);
+        const btn = card.querySelector('.run');
+        if(btn){
+          btn.addEventListener('click', () => {
+            const name = card.getAttribute('data-name');
+            const avg = parseInt(card.getAttribute('data-avg') || '0', 10);
+            runCampaign(name, count, avg, reward);
+          });
+        }
+      });
+    }
+
+    // initialize projections on load
+    setupCampaigns();
+  </script>
+</body>
+</html>
