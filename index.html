@@ -2,10 +2,28 @@
 <html>
   <head>
     <meta charset="utf-8">
-    <meta http-equiv="refresh" content="0;url=stores.html">
-    <title>In-Store Savings Demo</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>In-Store Savings — Demo</title>
+    <style>
+      body{font-family:system-ui, -apple-system,Segoe UI,Roboto,sans-serif;margin:24px;display:flex;align-items:center;justify-content:center;height:100vh;background:#f7fafc}
+      .card{background:#fff;padding:28px;border-radius:12px;box-shadow:0 6px 18px rgba(10,10,15,0.06);max-width:560px;width:100%;text-align:center}
+      h1{margin:0 0 8px;font-size:20px}
+      p.lead{color:#555;margin:0 0 18px}
+      .actions{display:flex;gap:12px;justify-content:center;margin-top:18px}
+      a.btn{display:inline-block;padding:12px 18px;border-radius:8px;text-decoration:none;color:#fff;background:#111}
+      a.btn.secondary{background:#10b981}
+      small.muted{display:block;margin-top:12px;color:#777}
+    </style>
   </head>
   <body>
-    <p>Redirecting to <a href="stores.html">Stores</a>…</p>
+    <div class="card">
+      <h1>Welcome — In‑Store Savings (Demo)</h1>
+      <p class="lead">Who are you today?</p>
+      <div class="actions">
+        <a class="btn" href="stores.html">I'm a customer</a>
+        <a class="btn secondary" href="retailer.html">I'm a retailer</a>
+      </div>
+      <small class="muted">Quick demo: click a role to open the experience. Use the Checkout link inside Stores to simulate purchases.</small>
+    </div>
   </body>
 </html>
