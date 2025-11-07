@@ -103,8 +103,8 @@
   // Read optional store_id from URL (so landing page can link into checkout for a store)
   function queryParam(name){ const params = new URLSearchParams(window.location.search); return params.get(name); }
   const SELECTED_STORE = queryParam('store_id') || 'st_demo';
-  // When developing locally the API runs on port 3001 — change if needed
-  const API_BASE = 'http://localhost:3001';
+  // API base: use the public tunnel API during this demo session
+  const API_BASE = 'https://puny-chairs-yell.loca.lt';
   let LOYALTY_MEMBER = null; // { id, name, points }
 
   async function apiCall(path, opts){
